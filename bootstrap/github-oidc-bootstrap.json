@@ -1,0 +1,127 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "One-time bootstrap to establish GitHub Actions OIDC trust with AWS. Deploy this manually once per AWS account. The role ARN output goes into your GitHub repository secret (AWS_ROLE_ARN).",
+  "Parameters": {
+    "CreateOIDCProvider": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": ["true", "false"],
+      "Description": "Set to false if a GitHub OIDC provider already exists in this account (each AWS account can only have one). Check IAM -> Identity providers before deploying."
+    }
+  },
+  "Conditions": {
+    "ShouldCreateOIDCProvider": { "Fn::Equals": [{ "Ref": "CreateOIDCProvider" }, "true"] }
+  },
+  "Resources": {
+    "GitHubOIDCProvider": {
+      "Type": "AWS::IAM::OIDCProvider",
+      "Condition": "ShouldCreateOIDCProvider",
+      "Properties": {
+        "Url": "https://token.actions.githubusercontent.com",
+        "ClientIdList": ["sts.amazonaws.com"],
+        "ThumbprintList": ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+      }
+    },
+    "GitHubActionsRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "GitHubActionsCloudFormationRole",
+        "Description": "Assumed by GitHub Actions to deploy CloudFormation stacks.",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Fn::If": [
+                    "ShouldCreateOIDCProvider",
+                    { "Fn::GetAtt": ["GitHubOIDCProvider", "Arn"] },
+                    { "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com" }
+                  ]
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                },
+                "StringLike": {
+                  "token.actions.githubusercontent.com:sub": {
+                    "Fn::Sub": "repo:illucensolutions/*:ref:refs/tags/*"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "CloudFormationDeployPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "CloudFormationChangeSetDeploy",
+        "Roles": [{ "Ref": "GitHubActionsRole" }],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "CloudFormationChangeSetOperations",
+              "Effect": "Allow",
+              "Action": [
+                "cloudformation:CreateChangeSet",
+                "cloudformation:DeleteChangeSet",
+                "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet",
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeStackEvents",
+                "cloudformation:GetTemplate",
+                "cloudformation:ValidateTemplate",
+                "cloudformation:ListChangeSets",
+                "cloudformation:ListStackResources"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "PassRoleToCloudFormation",
+              "Effect": "Allow",
+              "Action": "iam:PassRole",
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:PassedToService": "cloudformation.amazonaws.com"
+                }
+              }
+            },
+            {
+              "Sid": "S3ForLargeTemplates",
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "RoleArn": {
+      "Description": "Add this value as the AWS_ROLE_ARN secret in each GitHub repository that will use the deploy-cloudformation workflow.",
+      "Value": { "Fn::GetAtt": ["GitHubActionsRole", "Arn"] }
+    },
+    "OIDCProviderArn": {
+      "Description": "ARN of the GitHub OIDC identity provider.",
+      "Value": {
+        "Fn::If": [
+          "ShouldCreateOIDCProvider",
+          { "Fn::GetAtt": ["GitHubOIDCProvider", "Arn"] },
+          { "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com" }
+        ]
+      }
+    }
+  }
+}

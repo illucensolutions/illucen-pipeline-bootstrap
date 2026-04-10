@@ -1,0 +1,54 @@
+name: Bootstrap GitHub Actions OIDC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    name: Deploy OIDC bootstrap stack
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.BOOTSTRAP_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.BOOTSTRAP_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Check for existing OIDC provider
+        id: oidc_check
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          OIDC_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+          if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" &>/dev/null; then
+            echo "create_oidc=false" >> "$GITHUB_OUTPUT"
+            echo "OIDC provider already exists — skipping creation."
+          else
+            echo "create_oidc=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy CloudFormation bootstrap stack
+        run: |
+          aws cloudformation deploy \
+            --template-file bootstrap/github-oidc-bootstrap.json \
+            --stack-name github-actions-bootstrap \
+            --region us-east-2 \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              CreateOIDCProvider="${{ steps.oidc_check.outputs.create_oidc }}"
+
+      - name: Print role ARN
+        run: |
+          ROLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name github-actions-bootstrap \
+            --region us-east-2 \
+            --query "Stacks[0].Outputs[?OutputKey=='RoleArn'].OutputValue" \
+            --output text)
+          echo "Role ARN (add as AWS_ROLE_ARN secret in your deploy repo):"
+          echo "$ROLE_ARN"
