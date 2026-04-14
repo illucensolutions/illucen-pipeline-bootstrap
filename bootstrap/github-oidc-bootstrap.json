@@ -48,9 +48,7 @@
                   "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
                 },
                 "StringLike": {
-                  "token.actions.githubusercontent.com:sub": {
-                    "Fn::Sub": "repo:illucensolutions/*:ref:refs/tags/*"
-                  }
+                  "token.actions.githubusercontent.com:sub": "repo:illucensolutions/*"
                 }
               }
             }
