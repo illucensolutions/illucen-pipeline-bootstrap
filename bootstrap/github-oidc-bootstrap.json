@@ -77,7 +77,8 @@
                 "cloudformation:GetTemplate",
                 "cloudformation:ValidateTemplate",
                 "cloudformation:ListChangeSets",
-                "cloudformation:ListStackResources"
+                "cloudformation:ListStackResources",
+                "cloudformation:DeleteStack"
               ],
               "Resource": "*"
             },
